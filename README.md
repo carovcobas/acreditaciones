@@ -47,7 +47,9 @@ Ejecutá `supabase/roles.sql` en el SQL Editor (después de `schema.sql`).
 **Asignar personal a un evento:** en el evento, abrí *Personal de puerta asignado* y marcá a las personas.
 Sin nadie marcado, el evento lo ve todo el personal de puerta. Con alguien marcado, solo esas personas.
 
-Para hacer admin a otra persona: Table Editor → `perfiles` → cambiá `rol` a `admin`.
+**Gestionar el personal desde la web:** botón **Personal** (solo admin). Permite crear usuarios, cambiar el rol,
+cambiar la contraseña y eliminar. Usa la Edge Function `supabase/functions/usuarios`, que verifica que quien
+llama sea admin antes de usar la clave secreta del proyecto (la clave nunca llega al navegador).
 
 ### 2. Vercel
 

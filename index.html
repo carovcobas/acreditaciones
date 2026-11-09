@@ -135,6 +135,13 @@ body.is-door h1{font-size:1.3rem}
 body.is-door .wrap{padding-block:12px 24px}
 .chip.pick{cursor:pointer;padding:5px 12px;font-size:.88rem}
 .chip.pick input{width:auto;margin:0;accent-color:var(--accent)}
+.ulist{display:flex;flex-direction:column;gap:6px;max-height:45vh;overflow:auto}
+.urow{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between;border:1px solid var(--line);border-radius:6px;padding:8px 10px}
+.urow .em{font-weight:600;min-width:0;overflow-wrap:anywhere;flex:1 1 160px}
+.urow select{width:auto;padding:5px 8px}
+.urow form{display:flex;gap:6px;flex-basis:100%}
+.urow form input{flex:1;width:auto}
+.cred{margin-top:10px;border:1px solid var(--ok);background:var(--ok-bg);border-radius:6px;padding:10px;display:flex;flex-direction:column;gap:6px}
 </style>
 
 </head>
@@ -148,7 +155,8 @@ body.is-door .wrap{padding-block:12px 24px}
     <div class="evbar">
       <label class="label" for="evSel">Evento</label>
       <select id="evSel" aria-label="Evento activo"></select>
-      <button class="btn" id="btnNewEv">+ Nuevo evento</button>
+      <button class="btn" id="btnNewEv" hidden>+ Nuevo evento</button>
+      <button class="btn" id="btnStaff" hidden>Personal</button>
       <span class="status" id="who"></span>
       <button class="btn small" id="btnLogout">Salir</button>
     </div>
@@ -295,6 +303,25 @@ body.is-door .wrap{padding-block:12px 24px}
       <button class="btn" id="bCopy">Copiar código</button>
       <button class="btn primary" id="bClose">Cerrar</button>
     </div>
+  </div>
+</dialog>
+
+<dialog id="dlgStaff">
+  <div class="dlg">
+    <h2>Personal</h2>
+    <div class="status">Puerta: solo acredita con la cámara. Admin: gestiona eventos, invitados y personal.</div>
+    <div id="uList" class="ulist"></div>
+    <details class="add" open>
+      <summary>Nuevo usuario</summary>
+      <form id="uForm" class="form-grid" autocomplete="off">
+        <input id="uEmail" type="email" placeholder="Email *" required class="full">
+        <div class="row full"><input id="uPass" placeholder="Contraseña (mínimo 8)" required minlength="8" style="flex:1;width:auto"><button type="button" class="btn small" id="uGen">Generar</button></div>
+        <select id="uRol" aria-label="Rol"><option value="puerta">Puerta</option><option value="admin">Admin</option></select>
+        <button class="btn primary" type="submit">Crear usuario</button>
+      </form>
+      <div id="uMsg"></div>
+    </details>
+    <div class="row" style="justify-content:flex-end"><button class="btn" id="uClose">Cerrar</button></div>
   </div>
 </dialog>
 

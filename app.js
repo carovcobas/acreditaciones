@@ -61,7 +61,7 @@ async function onSession(s) {
   else startDoor();
 }
 function showAdminChrome(on) {
-  $("btnNewEv").hidden = !on;
+  $("btnNewEv").hidden = $("btnStaff").hidden = !on;
   $("evSel").parentElement.querySelector("label").hidden = $("evSel").hidden = !on;
 }
 
@@ -353,6 +353,88 @@ $("staffList").onchange = async (e) => {
     : await sb.from("asignaciones").delete().eq("user_id", row.user_id).eq("evento_id", row.evento_id);
   if (error) { cb.checked = !cb.checked; fail(error); return; }
   loadStaff(evId);
+};
+
+// ---------- Gestión de usuarios (admin) ----------
+// Crear, cambiar rol, cambiar contraseña y eliminar pasan por la función "usuarios" de Supabase,
+// que verifica que quien llama sea admin. La lista se lee de la tabla perfiles.
+async function usuarios(body) {
+  const { data, error } = await sb.functions.invoke("usuarios", { body });
+  if (error) {
+    let msg = error.message;
+    try { const j = await error.context.json(); if (j?.error) msg = j.error; } catch (e) {}
+    throw new Error(msg);
+  }
+  return data;
+}
+function genPass() {
+  const a = "abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  return Array.from(crypto.getRandomValues(new Uint32Array(10)), (n) => a[n % a.length]).join("");
+}
+async function loadUsers() {
+  const { data, error } = await sb.from("perfiles").select("user_id,email,rol").order("rol").order("email");
+  if (error) { $("uList").innerHTML = `<div class="status">No se pudo leer el personal: ${esc(error.message)}</div>`; return; }
+  const me = session?.user?.id;
+  $("uList").innerHTML = data.map((u) => `<div class="urow" data-u="${u.user_id}" data-email="${esc(u.email)}">
+    <span class="em">${esc(u.email)}${u.user_id === me ? ' <span class="status">(vos)</span>' : ""}</span>
+    <select data-k="rol" aria-label="Rol" ${u.user_id === me ? "disabled" : ""}>
+      <option value="puerta" ${u.rol === "puerta" ? "selected" : ""}>Puerta</option>
+      <option value="admin" ${u.rol === "admin" ? "selected" : ""}>Admin</option>
+    </select>
+    <button class="btn small" data-k="pass" type="button">Contraseña</button>
+    ${u.user_id === me ? "" : `<button class="btn small danger" data-k="del" type="button">Eliminar</button>`}
+  </div>`).join("");
+}
+$("btnStaff").onclick = () => { $("uMsg").innerHTML = ""; $("uPass").value = genPass(); $("dlgStaff").showModal(); loadUsers(); };
+$("uClose").onclick = () => $("dlgStaff").close();
+$("uGen").onclick = () => { $("uPass").value = genPass(); };
+function showCred(email, pass, titulo) {
+  $("uMsg").innerHTML = `<div class="cred"><b>${esc(titulo)}</b>
+    <div>Email: <span class="mono">${esc(email)}</span></div>
+    <div>Contraseña: <span class="mono">${esc(pass)}</span></div>
+    <div class="status">Pasale estos datos a la persona. La contraseña no se vuelve a mostrar.</div>
+    <div><button class="btn small" type="button" id="uCopy">Copiar datos</button></div></div>`;
+  $("uCopy").onclick = () => navigator.clipboard?.writeText(`Acreditaciones: https://acreditaciones.carolinacobas.com\nUsuario: ${email}\nContraseña: ${pass}`)
+    .then(() => toast("Datos copiados"), () => toast("Copialos a mano"));
+}
+$("uForm").onsubmit = async (e) => {
+  e.preventDefault();
+  const email = $("uEmail").value.trim(), password = $("uPass").value, rol = $("uRol").value;
+  const btn = e.submitter; if (btn) btn.disabled = true;
+  try {
+    await usuarios({ accion: "crear", email, password, rol });
+    showCred(email, password, `Usuario creado (${rol === "admin" ? "Admin" : "Puerta"})`);
+    $("uEmail").value = ""; $("uPass").value = genPass(); $("uRol").value = "puerta";
+    loadUsers(); if (evId) loadStaff(evId);
+  } catch (err) { $("uMsg").innerHTML = `<div class="status" style="color:var(--bad)">${esc(err.message)}</div>`; }
+  finally { if (btn) btn.disabled = false; }
+};
+$("uList").onchange = async (e) => {
+  const sel = e.target.closest("select[data-k=rol]"); if (!sel) return;
+  const row = sel.closest(".urow");
+  try { await usuarios({ accion: "rol", user_id: row.dataset.u, rol: sel.value }); toast("Rol actualizado"); if (evId) loadStaff(evId); }
+  catch (err) { toast(err.message); loadUsers(); }
+};
+$("uList").onclick = async (e) => {
+  const b = e.target.closest("button[data-k]"); if (!b) return;
+  const row = b.closest(".urow"), email = row.dataset.email;
+  if (b.dataset.k === "del") {
+    if (!await confirmBox("Eliminar usuario", `${email} ya no va a poder ingresar.`)) return;
+    try { await usuarios({ accion: "eliminar", user_id: row.dataset.u }); toast("Usuario eliminado"); loadUsers(); if (evId) loadStaff(evId); }
+    catch (err) { toast(err.message); }
+  }
+  if (b.dataset.k === "pass") {
+    if (row.querySelector("form")) { row.querySelector("form").remove(); return; }
+    const f = document.createElement("form");
+    f.innerHTML = `<input placeholder="Nueva contraseña (mínimo 8)" minlength="8" required aria-label="Nueva contraseña" value="${genPass()}"><button class="btn small primary">Guardar</button>`;
+    row.appendChild(f);
+    f.onsubmit = async (ev) => {
+      ev.preventDefault();
+      const password = f.querySelector("input").value;
+      try { await usuarios({ accion: "password", user_id: row.dataset.u, password }); f.remove(); showCred(email, password, "Contraseña cambiada"); }
+      catch (err) { toast(err.message); }
+    };
+  }
 };
 
 // ---------- Alta e importación ----------
