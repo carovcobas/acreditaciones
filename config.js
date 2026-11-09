@@ -2,6 +2,6 @@
 // La "publishable key" (sb_publishable_...) es pública por diseño: la seguridad la dan las políticas RLS de supabase/schema.sql.
 // NUNCA pongas acá la "secret key" (sb_secret_...).
 window.APP_CONFIG = {
-  SUPABASE_URL: "https://TU-PROYECTO.supabase.co",
-  SUPABASE_ANON_KEY: "sb_publishable_TU-CLAVE",
+  SUPABASE_URL: "https://bbssqinmkwsjtrzmdccm.supabase.co",
+  SUPABASE_ANON_KEY: "sb_publishable_mFZh7522_xJW-GS1RT0Kqg_adiSPcuD",
 };
