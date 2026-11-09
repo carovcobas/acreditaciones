@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Registro de invitados</title>
+<meta name="robots" content="noindex">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500&display=swap">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.57.4/dist/umd/supabase.js"></script>
+<script src="config.js"></script>
+<style>
+/* Una columna centrada: datos del evento, formulario, y después la credencial */
+:root{
+  --bg:#F3F4F6; --surface:#FFFFFF; --ink:#16202E; --muted:#5C6675; --line:#DCE0E6;
+  --accent:#D9480F; --accent-ink:#FFFFFF;
+  --ok:#1F7A4D; --ok-bg:#E3F3EA; --bad:#B42318; --bad-bg:#FDE7E5;
+  --display:"Barlow Condensed","Arial Narrow",sans-serif;
+  --body:"IBM Plex Sans",system-ui,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#10151D; --surface:#18202B; --ink:#E6EAF0; --muted:#98A2B1; --line:#2A3442;
+  --accent:#F2703A; --accent-ink:#10151D; --ok:#5CCB8F; --ok-bg:#15342A; --bad:#F2877D; --bad-bg:#3E1A18; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#10151D; --surface:#18202B; --ink:#E6EAF0; --muted:#98A2B1; --line:#2A3442;
+  --accent:#F2703A; --accent-ink:#10151D; --ok:#5CCB8F; --ok-bg:#15342A; --bad:#F2877D; --bad-bg:#3E1A18; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--body);font-size:16px;line-height:1.5}
+.wrap{max-width:480px;margin:0 auto;padding-block:28px 48px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:flex;flex-direction:column;gap:18px}
+.label{font-size:.72rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);font-weight:600}
+h1{font-family:var(--display);font-size:2.2rem;line-height:1.05;text-transform:uppercase;margin:4px 0 6px;text-wrap:balance}
+.meta{color:var(--muted)}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px}
+form{display:flex;flex-direction:column;gap:12px}
+label.f{display:flex;flex-direction:column;gap:4px;font-weight:500;font-size:.92rem}
+label.f small{color:var(--muted);font-weight:400}
+input{font:inherit;color:inherit;background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:11px 12px;width:100%}
+input:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.btn{font:inherit;border:1px solid var(--line);background:var(--surface);color:inherit;border-radius:6px;padding:11px 16px;cursor:pointer;font-weight:600}
+.btn.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.btn:disabled{opacity:.6;cursor:wait}
+.msg{border-radius:8px;padding:14px;border:1px solid var(--line)}
+.msg.bad{background:var(--bad-bg);border-color:var(--bad)}
+.msg.ok{background:var(--ok-bg);border-color:var(--ok)}
+.done{border-color:var(--ok)}
+.done h2{font-family:var(--display);font-size:1.7rem;text-transform:uppercase;margin:4px 0 8px;color:var(--ok)}
+.foot{font-size:.82rem;color:var(--muted);text-align:center}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="label">Registro de invitados</div>
+    <h1 id="evNombre">Cargando…</h1>
+    <div class="meta" id="evMeta"></div>
+  </header>
+
+  <div id="aviso" class="msg" hidden></div>
+
+  <section class="panel" id="formPanel" hidden>
+    <form id="form" autocomplete="on" novalidate>
+      <label class="f">Nombre y apellido
+        <input id="fNombre" name="name" autocomplete="name" required maxlength="120">
+      </label>
+      <label class="f">DNI o pasaporte
+        <input id="fDni" name="dni" inputmode="numeric" required maxlength="20">
+      </label>
+      <label class="f">Email <small>Te mandamos la credencial a esta dirección.</small>
+        <input id="fEmail" name="email" type="email" autocomplete="email" required maxlength="160">
+      </label>
+      <label class="f">Teléfono <small>Opcional</small>
+        <input id="fTel" name="tel" type="tel" autocomplete="tel" maxlength="40">
+      </label>
+      <label class="f">Empresa <small>Opcional</small>
+        <input id="fEmp" name="organization" autocomplete="organization" maxlength="120">
+      </label>
+      <div id="formErr" class="msg bad" hidden></div>
+      <button class="btn primary" type="submit" id="fBtn">Registrarme</button>
+    </form>
+  </section>
+
+  <section class="panel done" id="donePanel" hidden>
+    <div class="label" id="doneLabel">Solicitud recibida</div>
+    <h2 id="doneTitle"></h2>
+    <p id="doneText"></p>
+    <p class="foot" style="text-align:left">Si no te llega, revisá la carpeta de spam o promociones.</p>
+  </section>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const params = new URLSearchParams(location.search);
+const token = (params.get("e") || "").trim();
+let sb = null, evento = null;
+
+function fechaLarga(f) {
+  const [y, m, d] = f.split("-").map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString("es-AR", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+}
+function cuando(ev) { return [fechaLarga(ev.fecha), ev.hora ? ev.hora.slice(0, 5) + " h" : ""].filter(Boolean).join(" · "); }
+function aviso(texto, kind = "bad") { const a = $("aviso"); a.className = "msg " + kind; a.textContent = texto; a.hidden = false; }
+
+async function boot() {
+  const cfg = window.APP_CONFIG || {};
+  if (!window.supabase || !cfg.SUPABASE_URL) { $("evNombre").textContent = "No disponible"; aviso("No se pudo cargar la página. Probá de nuevo en unos minutos."); return; }
+  if (!token) { $("evNombre").textContent = "Link incompleto"; aviso("Este link de registro está incompleto. Pedile el link correcto a la organización."); return; }
+  sb = window.supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY, { auth: { persistSession: false } });
+  const { data, error } = await sb.rpc("info_registro", { p_token: token });
+  if (error) { $("evNombre").textContent = "No disponible"; aviso("No se pudo cargar el evento. Probá de nuevo en unos minutos."); return; }
+  if (!data) { $("evNombre").textContent = "Link no válido"; aviso("Este link de registro no existe o fue reemplazado. Pedile el link actualizado a la organización."); return; }
+  evento = data;
+  document.title = "Registro · " + data.nombre;
+  $("evNombre").textContent = data.nombre;
+  $("evMeta").textContent = [cuando(data), data.sala].filter(Boolean).join(" · ");
+  if (!data.abierto) { aviso("El registro para este evento está cerrado."); return; }
+  if (data.completo) { aviso("El cupo de este evento está completo."); return; }
+  $("formPanel").hidden = false;
+  $("fNombre").focus();
+}
+
+$("form").onsubmit = async (e) => {
+  e.preventDefault();
+  const err = $("formErr"); err.hidden = true;
+  const nombre = $("fNombre").value.trim(), dni = $("fDni").value.trim(), email = $("fEmail").value.trim();
+  if (nombre.length < 3) return showErr("Escribí tu nombre y apellido.");
+  if (dni.replace(/[^0-9a-z]/gi, "").length < 6) return showErr("Revisá el DNI o pasaporte.");
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return showErr("Revisá el email.");
+  $("fBtn").disabled = true; $("fBtn").textContent = "Registrando…";
+  const { data, error } = await sb.rpc("registrar_invitado", {
+    p_token: token, p_nombre: nombre, p_dni: dni, p_email: email, p_telefono: $("fTel").value.trim(), p_empresa: $("fEmp").value.trim(),
+  });
+  $("fBtn").disabled = false; $("fBtn").textContent = "Registrarme";
+  if (error) return showErr("No se pudo completar el registro. Probá de nuevo.");
+  const est = data.estado;
+  if (est === "error") return showErr(data.mensaje);
+  if (est === "duplicado") return showErr("Ese DNI ya está registrado con otro email. Si es tuyo, contactá a la organización.");
+  if (est === "completo") { $("formPanel").hidden = true; aviso("El cupo de este evento se completó."); return; }
+  if (est === "cerrado" || est === "link_invalido") { $("formPanel").hidden = true; aviso("El registro para este evento está cerrado."); return; }
+  if (est === "existente") return existente(data.solicitud, dni, email);
+  listo("¡Gracias, " + nombre.split(" ")[0] + "!", `Recibimos tu solicitud. Cuando la organización la confirme, te enviamos la credencial con el código QR a ${email}. Ese QR es tu entrada al evento.`);
+};
+function showErr(t) { const e = $("formErr"); e.textContent = t; e.hidden = false; }
+
+function listo(titulo, texto, label = "Solicitud recibida") {
+  $("formPanel").hidden = true; $("donePanel").hidden = false;
+  $("doneLabel").textContent = label; $("doneTitle").textContent = titulo; $("doneText").textContent = texto;
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+async function existente(solicitud, dni, email) {
+  if (solicitud === "pendiente")
+    return listo("Ya tenemos tu solicitud", `Está pendiente de confirmación. Cuando la organización la confirme, te llega la credencial con el QR a ${email}.`);
+  if (solicitud === "rechazado")
+    return listo("Solicitud no confirmada", "La organización no confirmó tu solicitud para este evento. Si creés que es un error, contactala.", "Registro");
+  listo("Ya estás confirmado", `Te reenviamos la credencial a ${email}.`, "Confirmado");
+  try { await sb.functions.invoke("enviar-credencial", { body: { token, dni, email } }); } catch (e) {}
+}
+
+boot();
+</script>
+</body>
+</html>

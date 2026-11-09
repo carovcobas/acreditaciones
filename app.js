@@ -1,17 +1,19 @@
 // Acreditaciones del Salón — lógica de la app sobre Supabase.
-const CATS = ["General", "VIP", "Prensa", "Staff", "Expositor", "Proveedor"];
 const $ = (id) => document.getElementById(id);
 
 let sb = null, session = null;
-let eventos = [], invitados = [], evId = null, filtro = "todos";
+let eventos = [], invitados = [], evId = null, filtro = "pendiente";
 let chEventos = null, chInv = null, subscribedFor = null, scanner = null;
 
 const fmtFecha = (s) => { if (!s) return ""; const [y, m, d] = s.split("-"); return `${d}/${m}/${y}`; };
 const hora = (ts) => ts ? new Date(ts).toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" }) : "";
 const norm = (s) => (s || "").toString().normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().trim();
 const esc = (s) => (s ?? "").toString().replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-function code() { const a = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; let s = ""; const r = crypto.getRandomValues(new Uint32Array(6)); for (const n of r) s += a[n % a.length]; return "AC-" + s; }
-function toast(t) { const d = document.createElement("div"); d.className = "toast"; d.textContent = t; document.body.appendChild(d); setTimeout(() => d.remove(), 2600); }
+function toast(t) {
+  let box = document.getElementById("toasts");
+  if (!box) { box = document.createElement("div"); box.id = "toasts"; box.setAttribute("role", "status"); document.body.appendChild(box); }
+  const d = document.createElement("div"); d.className = "toast"; d.textContent = t; box.appendChild(d); setTimeout(() => d.remove(), 3200);
+}
 function confirmBox(title, text) {
   return new Promise((res) => {
     $("cfTitle").textContent = title; $("cfText").textContent = text;
@@ -26,7 +28,6 @@ function fail(error, prefix = "No se pudo guardar") {
   const m = error?.message || String(error);
   toast(/permission|policy|JWT/i.test(m) ? "Tu sesión no tiene permiso. Volvé a ingresar." : `${prefix}: ${m}`);
 }
-$("gCat").innerHTML = CATS.map((c) => `<option>${c}</option>`).join("");
 
 // ---------- Arranque y sesión ----------
 async function boot() {
@@ -113,6 +114,7 @@ function setEvento(id) {
   if (ev) {
     $("evPanel").hidden = false; $("main").hidden = false; $("evName").textContent = ev.nombre;
     $("evMeta").textContent = [fmtFecha(ev.fecha), ev.hora && ev.hora.slice(0, 5) + " h", ev.sala].filter(Boolean).join(" · ");
+    renderReg(ev);
   }
   if (subscribedFor === id) return;
   if (chInv) { sb.removeChannel(chInv); chInv = null; }
@@ -144,27 +146,44 @@ async function loadInvitados(id) {
 
 // ---------- Lista ----------
 function renderInv() {
-  const tot = invitados.length, inn = invitados.filter((i) => i.acreditado).length;
+  const conf = invitados.filter((i) => i.estado === "aprobado");
+  const pend = invitados.filter((i) => i.estado === "pendiente").length;
+  const tot = conf.length, inn = conf.filter((i) => i.acreditado).length;
+  renderRegCount();
   $("cIn").textContent = inn; $("cTot").textContent = tot; $("cBar").style.width = tot ? (inn / tot * 100) + "%" : "0";
-  const cats = {}; invitados.forEach((i) => { const k = i.categoria || "General"; cats[k] = cats[k] || [0, 0]; cats[k][1]++; if (i.acreditado) cats[k][0]++; });
+  $("cPend").textContent = pend ? `${pend} por confirmar` : "";
+  $("bulkBar").hidden = !pend; $("btnBulk").textContent = pend === 1 ? "Confirmar al pendiente" : `Confirmar los ${pend} pendientes`;
+  document.querySelector('.seg button[data-f="pendiente"]').textContent = pend ? `Por confirmar (${pend})` : "Por confirmar";
+  const cats = {}; conf.forEach((i) => { const k = i.categoria || "General"; cats[k] = cats[k] || [0, 0]; cats[k][1]++; if (i.acreditado) cats[k][0]++; });
   $("cCats").innerHTML = Object.entries(cats).map(([k, [a, b]]) => `<span class="chip">${esc(k)} <b>${a}/${b}</b></span>`).join("");
   const q = norm($("q").value);
-  let list = invitados.filter((i) => filtro === "todos" || (filtro === "in" ? i.acreditado : !i.acreditado));
-  if (q) list = list.filter((i) => norm([i.nombre, i.dni, i.empresa, i.codigo, i.categoria].join(" ")).includes(q));
+  let list = invitados.filter((i) => filtro === "todos" || (filtro === "in" ? i.acreditado : i.estado === filtro));
+  if (q) list = list.filter((i) => norm([i.nombre, i.dni, i.empresa, i.email, i.codigo, i.categoria].join(" ")).includes(q));
   list.sort((a, b) => norm(a.nombre).localeCompare(norm(b.nombre)));
   const tb = $("tbody");
-  if (!tot) { tb.innerHTML = `<tr><td colspan="5" class="empty">Este evento todavía no tiene invitados. Agregalos abajo o importá una lista.</td></tr>`; return; }
+  if (!invitados.length) { tb.innerHTML = `<tr><td colspan="5" class="empty">Todavía no hay inscriptos. Abrí el registro y compartí el link de arriba.</td></tr>`; return; }
   if (!list.length) { tb.innerHTML = `<tr><td colspan="5" class="empty">Nadie coincide con el filtro.</td></tr>`; return; }
   tb.innerHTML = list.map((i) => `<tr>
-    <td><b>${esc(i.nombre)}</b>${i.empresa ? `<div class="status">${esc(i.empresa)}</div>` : ""}</td>
+    <td><b>${esc(i.nombre)}</b>${i.origen === "registro" ? '<span class="tag">registro</span>' : ""}<div class="status">${esc([i.email, i.telefono, i.empresa].filter(Boolean).join(" · "))}</div></td>
     <td class="mono">${esc(i.dni || "—")}</td>
     <td>${esc(i.categoria || "General")}</td>
-    <td>${i.acreditado ? `<span class="pill in" title="${esc(i.acreditado_por_email || "")}">Ingresó ${hora(i.acreditado_en)}</span>` : `<span class="pill out">Pendiente</span>`}</td>
-    <td><div class="acts">
-      ${i.acreditado ? `<button class="btn small" data-a="undo" data-id="${i.id}">Deshacer</button>` : `<button class="btn small primary" data-a="in" data-id="${i.id}">Acreditar</button>`}
-      <button class="btn small" data-a="qr" data-id="${i.id}">Credencial</button>
-      <button class="btn small danger" data-a="del" data-id="${i.id}" aria-label="Eliminar">✕</button>
+    <td>${pillEstado(i)}</td>
+    <td><div class="acts">${accionesInv(i)}
+      <button class="btn small danger" data-a="del" data-id="${i.id}" aria-label="Eliminar" title="Eliminar">✕</button>
     </div></td></tr>`).join("");
+}
+function pillEstado(i) {
+  if (i.estado === "pendiente") return `<span class="pill wait">Por confirmar</span>`;
+  if (i.estado === "rechazado") return `<span class="pill no">Rechazado</span>`;
+  if (i.acreditado) return `<span class="pill in" title="${esc(i.acreditado_por_email || "")}">Ingresó ${hora(i.acreditado_en)}</span>`;
+  return `<span class="pill out">Confirmado</span>`;
+}
+function accionesInv(i) {
+  const b = (a, txt, cls = "") => `<button class="btn small ${cls}" data-a="${a}" data-id="${i.id}">${txt}</button>`;
+  if (i.estado === "pendiente") return b("ok", "Confirmar", "primary") + b("no", "Rechazar");
+  if (i.estado === "rechazado") return b("ok", "Confirmar");
+  const mail = i.email ? `<button class="btn small" data-a="mail" data-id="${i.id}" title="${i.email_enviado_en ? "Enviada " + fmtFecha(i.email_enviado_en.slice(0, 10)) + " " + hora(i.email_enviado_en) : "Todavía no se envió"}">${i.email_enviado_en ? "Reenviar" : "Enviar"} email</button>` : "";
+  return (i.acreditado ? b("undo", "Deshacer ingreso") : b("in", "Acreditar") + b("no", "Rechazar")) + b("qr", "Credencial") + mail;
 }
 $("q").oninput = renderInv;
 document.querySelectorAll(".seg button").forEach((b) => b.onclick = () => {
@@ -177,6 +196,12 @@ $("tbody").onclick = async (e) => {
   const g = invitados.find((i) => i.id === b.dataset.id); if (!g) return;
   if (b.dataset.a === "in") acreditar(g);
   if (b.dataset.a === "qr") showBadge(g);
+  if (b.dataset.a === "mail") { b.disabled = true; await enviarEmail(g); b.disabled = false; }
+  if (b.dataset.a === "ok") { b.disabled = true; await confirmar(g); b.disabled = false; }
+  if (b.dataset.a === "no" && await confirmBox("Rechazar", `${g.nombre} no va a poder entrar. Si ya tenía la credencial, deja de funcionar.`)) {
+    const { error } = await sb.from("invitados").update({ estado: "rechazado", revisado_en: new Date().toISOString() }).eq("id", g.id);
+    if (error) fail(error); else { Object.assign(g, { estado: "rechazado" }); renderInv(); toast("Rechazado"); }
+  }
   if (b.dataset.a === "undo" && await confirmBox("Deshacer ingreso", `${g.nombre} volverá a figurar como pendiente.`)) {
     const { error } = await sb.from("invitados").update({ acreditado: false, acreditado_en: null, acreditado_por_email: null }).eq("id", g.id);
     error ? fail(error) : toast("Ingreso deshecho");
@@ -199,6 +224,8 @@ function veredicto(r) {
   const meta = [r.categoria, r.empresa, r.dni && "DNI " + r.dni].filter(Boolean).join(" · ");
   if (r.estado === "ok") return ["ok", "Acceso permitido", r.nombre, meta];
   if (r.estado === "ya_ingreso") return ["warn", "Ya ingresó", `${r.nombre} · ${hora(r.acreditado_en)}`, [meta, r.acreditado_por && "por " + r.acreditado_por].filter(Boolean).join(" · ")];
+  if (r.estado === "pendiente") return ["bad", "Sin confirmar", r.nombre, "Su registro todavía no fue confirmado"];
+  if (r.estado === "rechazado") return ["bad", "No autorizado", r.nombre, "Su registro fue rechazado"];
   if (r.estado === "otro_evento") return ["bad", "Otro evento", `La credencial es de “${r.evento}”`, r.valor];
   return ["bad", "Acceso denegado", "No está en la lista de este evento", r.valor];
 }
@@ -437,44 +464,116 @@ $("uList").onclick = async (e) => {
   }
 };
 
-// ---------- Alta e importación ----------
-$("addForm").onsubmit = async (e) => {
-  e.preventDefault(); if (!evId) return;
-  const g = { evento_id: evId, nombre: $("gNombre").value.trim(), dni: $("gDni").value.trim(), empresa: $("gEmpresa").value.trim(), categoria: $("gCat").value, codigo: code() };
-  if (!g.nombre) return;
-  const { error } = await sb.from("invitados").insert(g);
-  if (error) { fail(error); return; }
-  toast("Invitado agregado"); $("addForm").reset(); $("gNombre").focus();
+// ---------- Link de registro (admin) ----------
+const REG_BASE = location.origin + "/registro?e=";
+function renderReg(ev) {
+  if (!ev) return;
+  const abierto = !!ev.registro_abierto, pasado = ev.fecha < hoyAR();
+  $("regOpen").checked = abierto;
+  $("regState").textContent = pasado ? "Evento terminado" : abierto ? "Abierto" : "Cerrado";
+  $("regState").className = "pill " + (abierto && !pasado ? "on" : "out");
+  $("regLink").value = ev.registro_token ? REG_BASE + ev.registro_token : "";
+  if (document.activeElement !== $("regCupo")) $("regCupo").value = ev.cupo || "";
+  renderRegCount();
+}
+function renderRegCount() {
+  const ev = eventos.find((e) => e.id === evId); if (!ev) return;
+  const conf = invitados.filter((i) => i.estado === "aprobado").length, pend = invitados.filter((i) => i.estado === "pendiente").length;
+  $("regCount").textContent = (ev.cupo ? `${conf} de ${ev.cupo} confirmados` : `${conf} confirmados`) + (pend ? ` · ${pend} por confirmar` : "");
+}
+function hoyAR() { return new Date().toLocaleDateString("en-CA", { timeZone: "America/Argentina/Buenos_Aires" }); }
+async function updateEvento(campos, msg) {
+  const { error } = await sb.from("eventos").update(campos).eq("id", evId);
+  if (error) { fail(error); loadEventos(); return false; }
+  const ev = eventos.find((e) => e.id === evId); if (ev) Object.assign(ev, campos);
+  renderReg(ev); if (msg) toast(msg); return true;
+}
+$("regOpen").onchange = (e) => updateEvento({ registro_abierto: e.target.checked }, e.target.checked ? "Registro abierto" : "Registro cerrado");
+$("regCupo").onchange = (e) => {
+  const v = parseInt(e.target.value, 10);
+  updateEvento({ cupo: v > 0 ? v : null }, v > 0 ? `Cupo: ${v}` : "Sin límite de cupo");
 };
-$("impForm").onsubmit = async (e) => {
-  e.preventDefault(); if (!evId) return;
-  const rows = $("impText").value.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).map((l) => {
-    const p = l.split(/\t|;|,/).map((x) => x.trim());
-    return { evento_id: evId, nombre: p[0], dni: p[1] || "", empresa: p[2] || "", categoria: CATS.find((c) => norm(c) === norm(p[3])) || "General", codigo: code() };
-  }).filter((r) => r.nombre);
-  if (!rows.length) return;
-  $("impMsg").textContent = `Importando ${rows.length}…`;
-  for (let i = 0; i < rows.length; i += 500) {
-    const { error } = await sb.from("invitados").insert(rows.slice(i, i + 500));
-    if (error) { $("impMsg").textContent = `Se cortó después de ${i} invitados: ${error.message}`; return; }
-  }
-  $("impMsg").textContent = `${rows.length} invitados importados.`; $("impText").value = "";
+$("regCopy").onclick = () => {
+  const link = $("regLink").value; if (!link) return;
+  navigator.clipboard?.writeText(link).then(() => toast("Link copiado"), () => { $("regLink").select(); toast("Copialo con Ctrl+C"); });
+};
+$("regNew").onclick = async () => {
+  if (!await confirmBox("Generar link nuevo", "El link actual deja de funcionar. Las credenciales ya emitidas siguen siendo válidas.")) return;
+  const t = Array.from(crypto.getRandomValues(new Uint8Array(8)), (b) => b.toString(16).padStart(2, "0")).join("");
+  updateEvento({ registro_token: t }, "Link nuevo generado");
 };
 
+// ---------- Confirmar registrados (admin) ----------
+// Confirmar cambia el estado a "aprobado" y envía el QR por email. La base no deja pasarse del cupo.
+async function confirmar(g, silencioso = false) {
+  const { error } = await sb.from("invitados").update({ estado: "aprobado", revisado_en: new Date().toISOString() }).eq("id", g.id);
+  if (error) { if (!silencioso) fail(error, "No se pudo confirmar"); return error; }
+  Object.assign(g, { estado: "aprobado" }); renderInv();
+  const ok = g.email ? await enviarEmail(g, true) : false;
+  if (!silencioso) toast(ok ? `Confirmado. QR enviado a ${g.email}` : "Confirmado. El email no se pudo enviar: usá Reenviar email.");
+  return null;
+}
+$("btnBulk").onclick = async () => {
+  const pend = invitados.filter((i) => i.estado === "pendiente").sort((a, b) => (a.creado_en || "").localeCompare(b.creado_en || ""));
+  if (!pend.length || !await confirmBox("Confirmar pendientes", `Se confirman ${pend.length} personas y a cada una le llega su QR por email.`)) return;
+  $("btnBulk").disabled = true;
+  let ok = 0, err = null;
+  for (const g of pend) {
+    $("btnBulk").textContent = `Confirmando ${ok + 1} de ${pend.length}…`;
+    err = await confirmar(g, true);
+    if (err) break;
+    ok++;
+  }
+  $("btnBulk").disabled = false; renderInv();
+  toast(err ? `Se confirmaron ${ok}. Se frenó: ${err.message}` : `${ok} confirmados y notificados por email`);
+};
+
+// ---------- Reenviar credencial por email (admin) ----------
+async function enviarEmail(g, silencioso = false) {
+  const { data, error } = await sb.functions.invoke("enviar-credencial", { body: { invitado_id: g.id } });
+  if (error) {
+    let msg = error.message; try { const j = await error.context.json(); msg = j?.error || j?.detalle || msg; } catch (e) {}
+    if (!silencioso) toast("No se pudo enviar: " + msg);
+    return false;
+  }
+  if (!silencioso) {
+    if (data?.enviado) toast("Credencial enviada a " + g.email);
+    else toast(data?.motivo === "sin_configurar" ? "Falta configurar el envío de emails (Resend)." : "No se pudo enviar el email.");
+  }
+  return !!data?.enviado;
+}
+
 // ---------- Eventos: alta y baja ----------
-$("btnNewEv").onclick = () => { $("eFecha").value = new Date().toISOString().slice(0, 10); $("dlgEv").showModal(); $("eNombre").focus(); };
+let editandoEv = null;
+function abrirEvento(ev) {
+  editandoEv = ev ? ev.id : null;
+  $("evDlgTitle").textContent = ev ? "Editar evento" : "Nuevo evento";
+  $("evSubmit").textContent = ev ? "Guardar cambios" : "Crear evento";
+  $("eNombre").value = ev ? ev.nombre : "";
+  $("eFecha").value = ev ? ev.fecha : hoyAR();
+  $("eHora").value = ev && ev.hora ? ev.hora.slice(0, 5) : "";
+  $("eSala").value = ev ? ev.sala || "" : "";
+  $("dlgEv").showModal(); $("eNombre").focus();
+}
+$("btnNewEv").onclick = () => abrirEvento(null);
+$("btnEditEv").onclick = () => { const ev = eventos.find((e) => e.id === evId); if (ev) abrirEvento(ev); };
 $("evCancel").onclick = () => $("dlgEv").close();
 $("evForm").onsubmit = async (e) => {
   e.preventDefault();
   const ev = { nombre: $("eNombre").value.trim(), fecha: $("eFecha").value, hora: $("eHora").value || null, sala: $("eSala").value.trim() };
   if (!ev.nombre || !ev.fecha) return;
+  if (editandoEv) {
+    const { error } = await sb.from("eventos").update(ev).eq("id", editandoEv);
+    if (error) { fail(error); return; }
+    $("dlgEv").close(); toast("Evento actualizado"); loadEventos(); return;
+  }
   const { data, error } = await sb.from("eventos").insert(ev).select().single();
   if (error) { fail(error); return; }
-  evId = data.id; $("dlgEv").close(); $("evForm").reset(); toast("Evento creado"); loadEventos();
+  evId = data.id; $("dlgEv").close(); toast("Evento creado"); loadEventos();
 };
 $("btnDelEv").onclick = async () => {
   const ev = eventos.find((e) => e.id === evId); if (!ev) return;
-  if (!await confirmBox("Eliminar evento", `Se borra “${ev.nombre}” y sus ${invitados.length} invitados. No se puede deshacer.`)) return;
+  if (!await confirmBox("Eliminar evento", `Se borra “${ev.nombre}” con sus ${invitados.length} registrados y el link de registro deja de funcionar. No se puede deshacer.`)) return;
   const { error } = await sb.from("eventos").delete().eq("id", ev.id); // los invitados se borran en cascada
   if (error) { fail(error); return; }
   evId = null; toast("Evento eliminado"); loadEventos();
@@ -496,8 +595,8 @@ $("bClose").onclick = () => $("dlgBadge").close();
 // ---------- Exportar ----------
 $("btnCsv").onclick = () => {
   const ev = eventos.find((e) => e.id === evId); if (!ev) return;
-  const rows = [["Nombre", "DNI", "Empresa", "Categoria", "Codigo", "Estado", "Hora ingreso", "Acreditado por"],
-    ...invitados.map((i) => [i.nombre, i.dni, i.empresa, i.categoria, i.codigo, i.acreditado ? "Ingresó" : "Pendiente", hora(i.acreditado_en), i.acreditado_por_email])];
+  const rows = [["Nombre", "DNI", "Email", "Telefono", "Empresa", "Categoria", "Codigo", "Origen", "Estado", "Hora ingreso", "Acreditado por"],
+    ...invitados.map((i) => [i.nombre, i.dni, i.email, i.telefono, i.empresa, i.categoria, i.codigo, i.origen, i.acreditado ? "Ingresó" : ({ pendiente: "Por confirmar", aprobado: "Confirmado", rechazado: "Rechazado" }[i.estado] || i.estado), hora(i.acreditado_en), i.acreditado_por_email])];
   const csv = "﻿" + rows.map((r) => r.map((v) => `"${(v ?? "").toString().replace(/"/g, '""')}"`).join(";")).join("\n");
   const a = document.createElement("a");
   a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));

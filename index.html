@@ -142,6 +142,15 @@ body.is-door .wrap{padding-block:12px 24px}
 .urow form{display:flex;gap:6px;flex-basis:100%}
 .urow form input{flex:1;width:auto}
 .cred{margin-top:10px;border:1px solid var(--ok);background:var(--ok-bg);border-radius:6px;padding:10px;display:flex;flex-direction:column;gap:6px}
+.reg{margin-top:14px;border-top:1px solid var(--line);padding-top:14px}
+.pill.on{background:var(--ok-bg);color:var(--ok)}
+.tag{display:inline-block;font-size:.7rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);border:1px solid var(--line);border-radius:4px;padding:0 5px;margin-left:6px;vertical-align:middle}
+.seg{flex-wrap:wrap}
+.pill.wait{background:var(--warn-bg);color:var(--warn)}
+.pill.no{background:var(--bad-bg);color:var(--bad)}
+.grid > *{min-width:0}
+#toasts{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(16px + env(safe-area-inset-bottom,0px));display:flex;flex-direction:column;gap:8px;align-items:center;z-index:20;width:max-content;max-width:calc(100vw - 32px)}
+#toasts .toast{position:static;transform:none}
 </style>
 
 </head>
@@ -195,13 +204,35 @@ body.is-door .wrap{padding-block:12px 24px}
       <div>
         <h2 id="evName"></h2>
         <div class="meta" id="evMeta"></div>
+        <div class="row" style="margin-top:8px">
+          <button class="btn small" id="btnEditEv" type="button">Editar evento</button>
+          <button class="btn small danger" id="btnDelEv" type="button">Eliminar evento</button>
+        </div>
       </div>
       <div>
         <div class="counter"><span id="cIn">0</span> <small>/ <span id="cTot">0</span> ingresados</small></div>
+        <div class="status" style="text-align:right" id="cPend"></div>
       </div>
     </div>
     <div class="bar"><i id="cBar"></i></div>
     <div class="cats" id="cCats"></div>
+    <div class="reg" id="regBox">
+      <div class="row" style="justify-content:space-between;gap:10px">
+        <label class="row" style="gap:8px;font-weight:600"><input type="checkbox" id="regOpen" style="width:auto;accent-color:var(--accent)"> Registro abierto</label>
+        <span class="pill out" id="regState">Cerrado</span>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <input id="regLink" readonly aria-label="Link de registro" class="mono" style="flex:1 1 220px;width:auto;font-size:.85rem">
+        <button class="btn small primary" type="button" id="regCopy">Copiar link</button>
+      </div>
+      <div class="row" style="margin-top:8px;font-size:.88rem">
+        <label for="regCupo">Cupo</label>
+        <input id="regCupo" type="number" min="1" step="1" placeholder="Sin límite" style="width:120px">
+        <span class="status" id="regCount"></span>
+        <button class="btn small" type="button" id="regNew" style="margin-left:auto">Generar link nuevo</button>
+      </div>
+      <div class="status" style="margin-top:6px">Mandale este link a la organizadora para que lo comparta con los invitados. Cada invitado se registra solo y recibe su QR por email.</div>
+    </div>
     <details class="add" id="staffBox">
       <summary>Personal de puerta asignado: <span id="staffSum">todos</span></summary>
       <div class="status" style="margin-top:8px">Sin nadie marcado, cualquier persona de puerta puede acreditar en este evento el día que se hace. Si marcás a alguien, solo las personas marcadas lo ven.</div>
@@ -211,7 +242,7 @@ body.is-door .wrap{padding-block:12px 24px}
 
   <section class="panel" id="noEv" hidden>
     <h2>Todavía no hay eventos</h2>
-    <p>Creá el primer evento del salón con <b>+ Nuevo evento</b>. Después cargá los invitados y acreditalos en la puerta escaneando su QR, o buscándolos por nombre, DNI o código.</p>
+    <p>Creá el primer evento del salón con <b>+ Nuevo evento</b>. Después abrí el registro y compartí el link: cada invitado se registra solo y recibe su QR por email. En la puerta se escanea con la cámara.</p>
   </section>
 
   <div class="grid" id="main" hidden>
@@ -232,16 +263,21 @@ body.is-door .wrap{padding-block:12px 24px}
         <h2>Lista de invitados</h2>
         <div class="row">
           <button class="btn small" id="btnCsv">Exportar CSV</button>
-          <button class="btn small danger" id="btnDelEv">Eliminar evento</button>
         </div>
       </div>
       <div class="roster-tools">
         <input id="q" placeholder="Filtrar por nombre, empresa, DNI…" aria-label="Filtrar">
         <div class="seg" role="group" aria-label="Estado">
-          <button data-f="todos" aria-pressed="true">Todos</button>
-          <button data-f="pend" aria-pressed="false">Pendientes</button>
+          <button data-f="pendiente" aria-pressed="true">Por confirmar</button>
+          <button data-f="aprobado" aria-pressed="false">Confirmados</button>
           <button data-f="in" aria-pressed="false">Ingresados</button>
+          <button data-f="rechazado" aria-pressed="false">Rechazados</button>
+          <button data-f="todos" aria-pressed="false">Todos</button>
         </div>
+      </div>
+      <div class="row" id="bulkBar" hidden style="margin-bottom:10px">
+        <button class="btn small primary" type="button" id="btnBulk">Confirmar todos los pendientes</button>
+        <span class="status">Les llega el QR por email al confirmar.</span>
       </div>
       <div class="tablewrap">
         <table>
@@ -250,31 +286,13 @@ body.is-door .wrap{padding-block:12px 24px}
         </table>
       </div>
 
-      <details class="add">
-        <summary>Agregar invitado</summary>
-        <form id="addForm" class="form-grid">
-          <input id="gNombre" placeholder="Nombre y apellido *" required class="full">
-          <input id="gDni" placeholder="DNI">
-          <input id="gEmpresa" placeholder="Empresa / mesa">
-          <select id="gCat"></select>
-          <button class="btn primary" type="submit">Agregar</button>
-        </form>
-      </details>
-      <details class="add">
-        <summary>Importar lista (pegar desde Excel)</summary>
-        <div class="status" style="margin-top:8px">Una persona por línea: <span class="mono">Nombre; DNI; Empresa; Categoría</span>. También acepta comas o tabulaciones.</div>
-        <form id="impForm" style="display:flex;flex-direction:column;gap:8px;margin-top:8px">
-          <textarea id="impText" rows="5" placeholder="Juan Pérez; 30111222; Acme SA; VIP"></textarea>
-          <div class="row"><button class="btn primary" type="submit">Importar</button><span class="status" id="impMsg"></span></div>
-        </form>
-      </details>
     </section>
   </div>
 </div>
 
 <dialog id="dlgEv">
   <form class="dlg" id="evForm" method="dialog">
-    <h2>Nuevo evento</h2>
+    <h2 id="evDlgTitle">Nuevo evento</h2>
     <div class="form-grid">
       <input id="eNombre" placeholder="Nombre del evento *" required class="full">
       <input id="eFecha" type="date" required aria-label="Fecha">
@@ -283,7 +301,7 @@ body.is-door .wrap{padding-block:12px 24px}
     </div>
     <div class="row" style="justify-content:flex-end">
       <button class="btn" type="button" id="evCancel">Cancelar</button>
-      <button class="btn primary" type="submit">Crear evento</button>
+      <button class="btn primary" type="submit" id="evSubmit">Crear evento</button>
     </div>
   </form>
 </dialog>
