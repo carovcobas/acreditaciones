@@ -1,8 +1,16 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Acreditaciones del Salón</title>
-<meta name="claude:viewport-fit-sides" content="cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500&display=swap">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<script src="config.js"></script>
+<style>body{margin:0}[hidden]{display:none!important}img{max-width:100%}</style>
 <style>
 /* Layout: control desk — event bar on top, check-in console left, guest roster right; stacks on phones */
 :root{
@@ -103,8 +111,14 @@ dialog::backdrop{background:rgba(10,14,20,.55)}
 .qr{padding:8px;background:#fff}
 .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(16px + env(safe-area-inset-bottom,0px));background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:6px;font-size:.9rem;z-index:20}
 @media (prefers-reduced-motion:reduce){.bar > i{transition:none}}
+
+.login{max-width:420px}
+#reader{margin-top:12px;border-radius:8px;overflow:hidden;border:1px solid var(--line)}
+#reader video{width:100%!important;height:auto!important}
 </style>
 
+</head>
+<body>
 <div class="wrap">
   <header class="top">
     <div>
@@ -115,9 +129,22 @@ dialog::backdrop{background:rgba(10,14,20,.55)}
       <label class="label" for="evSel">Evento</label>
       <select id="evSel" aria-label="Evento activo"></select>
       <button class="btn" id="btnNewEv">+ Nuevo evento</button>
+      <span class="status" id="who"></span>
+      <button class="btn small" id="btnLogout">Salir</button>
     </div>
   </header>
   <div class="status" id="status">Conectando con la base de datos…</div>
+
+  <section class="panel login" id="loginPanel" hidden>
+    <h2>Ingreso del personal</h2>
+    <p class="status">Entrá con el usuario que te dio la organización.</p>
+    <form id="loginForm" class="form-grid">
+      <input id="lEmail" type="email" placeholder="Email" autocomplete="username" required class="full">
+      <input id="lPass" type="password" placeholder="Contraseña" autocomplete="current-password" required class="full">
+      <button class="btn primary" type="submit">Entrar</button>
+      <span class="status" id="loginMsg"></span>
+    </form>
+  </section>
 
   <section class="panel" id="evPanel" hidden>
     <div class="evhead">
@@ -145,7 +172,9 @@ dialog::backdrop{background:rgba(10,14,20,.55)}
       <form id="scanForm" autocomplete="off">
         <input id="scanIn" placeholder="Código, DNI o nombre" aria-label="Código, DNI o nombre">
         <button class="btn primary" type="submit">Buscar y acreditar</button>
+        <button class="btn" type="button" id="btnCam">Escanear con la cámara</button>
       </form>
+      <div id="reader" hidden></div>
       <div id="result"></div>
     </section>
 
@@ -239,181 +268,6 @@ dialog::backdrop{background:rgba(10,14,20,.55)}
   </div>
 </dialog>
 
-<script>
-const CATS=["General","VIP","Prensa","Staff","Expositor","Proveedor"];
-const $=id=>document.getElementById(id);
-let db=null,user=null,me=null;
-let eventos=[],invitados=[],evId=null,unsubInv=null,filtro="todos";
-const fmtFecha=s=>{if(!s)return"";const [y,m,d]=s.split("-");return `${d}/${m}/${y}`};
-const hora=ts=>ts?new Date(ts).toLocaleTimeString("es-AR",{hour:"2-digit",minute:"2-digit"}):"";
-const norm=s=>(s||"").toString().normalize("NFD").replace(/[̀-ͯ]/g,"").toLowerCase().trim();
-const esc=s=>(s??"").toString().replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
-function code(){const a="ABCDEFGHJKLMNPQRSTUVWXYZ23456789";let s="";for(let i=0;i<6;i++)s+=a[Math.floor(Math.random()*a.length)];return "AC-"+s}
-function toast(t){const d=document.createElement("div");d.className="toast";d.textContent=t;document.body.appendChild(d);setTimeout(()=>d.remove(),2600)}
-function confirmBox(title,text){return new Promise(res=>{$("cfTitle").textContent=title;$("cfText").textContent=text;const d=$("dlgConfirm");const done=v=>{d.close();$("cfYes").onclick=$("cfNo").onclick=null;res(v)};$("cfYes").onclick=()=>done(true);$("cfNo").onclick=()=>done(false);d.showModal()})}
-$("gCat").innerHTML=CATS.map(c=>`<option>${c}</option>`).join("");
-
-async function boot(){
-  const c=window.claude;
-  if(!c||!c.use){$("status").textContent="Abrí esta página en claude.ai para usar la base de datos compartida.";return}
-  db=await c.use("db"); user=await c.use("user");
-  if(!db){$("status").textContent="No se pudo conectar con la base de datos. Iniciá sesión en claude.ai para acreditar.";return}
-  try{me=user?await user.id():null}catch(e){}
-  const t=setTimeout(()=>{$("status").textContent="La base de datos todavía no responde. Revisá la conexión."},10000);
-  db.collection("eventos").orderBy("fecha","asc").onSnapshot(s=>{
-    if(!s.metadata.fromCache)clearTimeout(t);
-    $("status").textContent="";
-    eventos=s.docs.map(d=>({id:d.id,...d.data()}));
-    renderEventos();
-  },e=>{clearTimeout(t);$("status").textContent="Error al leer eventos: "+e.message});
-}
-
-function renderEventos(){
-  const sel=$("evSel");
-  if(!eventos.length){sel.innerHTML="";$("noEv").hidden=false;$("evPanel").hidden=true;$("main").hidden=true;setEvento(null);return}
-  $("noEv").hidden=true;
-  if(!evId||!eventos.find(e=>e.id===evId)){
-    let saved=null;try{saved=localStorage.getItem("evId")}catch(e){}
-    const hoy=new Date().toISOString().slice(0,10);
-    evId=(eventos.find(e=>e.id===saved)||eventos.find(e=>e.fecha>=hoy)||eventos[eventos.length-1]).id;
-  }
-  sel.innerHTML=eventos.map(e=>`<option value="${e.id}">${esc(fmtFecha(e.fecha))} · ${esc(e.nombre)}</option>`).join("");
-  sel.value=evId; setEvento(evId);
-}
-let subscribedFor=null;
-function setEvento(id){
-  evId=id; try{id&&localStorage.setItem("evId",id)}catch(e){}
-  const ev=eventos.find(e=>e.id===id);
-  if(ev){$("evPanel").hidden=false;$("main").hidden=false;$("evName").textContent=ev.nombre;
-    $("evMeta").textContent=[fmtFecha(ev.fecha),ev.hora&&ev.hora+" h",ev.sala].filter(Boolean).join(" · ")}
-  if(subscribedFor===id)return;
-  if(unsubInv){unsubInv();unsubInv=null}
-  subscribedFor=id; invitados=[]; renderInv(); $("result").innerHTML="";
-  if(!id)return;
-  unsubInv=db.collection("invitados").where("eventoId","==",id).onSnapshot(s=>{
-    invitados=s.docs.map(d=>({id:d.id,...d.data()}));renderInv();
-  },e=>toast("Error al leer invitados: "+e.message));
-}
-$("evSel").onchange=e=>setEvento(e.target.value);
-
-function renderInv(){
-  const tot=invitados.length,inn=invitados.filter(i=>i.acreditado).length;
-  $("cIn").textContent=inn;$("cTot").textContent=tot;$("cBar").style.width=tot?(inn/tot*100)+"%":"0";
-  const cats={};invitados.forEach(i=>{const k=i.categoria||"General";cats[k]=cats[k]||[0,0];cats[k][1]++;if(i.acreditado)cats[k][0]++});
-  $("cCats").innerHTML=Object.entries(cats).map(([k,[a,b]])=>`<span class="chip">${esc(k)} <b>${a}/${b}</b></span>`).join("");
-  const q=norm($("q").value);
-  let list=invitados.filter(i=>filtro==="todos"||(filtro==="in"?i.acreditado:!i.acreditado));
-  if(q)list=list.filter(i=>norm([i.nombre,i.dni,i.empresa,i.codigo,i.categoria].join(" ")).includes(q));
-  list.sort((a,b)=>norm(a.nombre).localeCompare(norm(b.nombre)));
-  const tb=$("tbody");
-  if(!tot){tb.innerHTML=`<tr><td colspan="5" class="empty">Este evento todavía no tiene invitados. Agregalos abajo o importá una lista.</td></tr>`;return}
-  if(!list.length){tb.innerHTML=`<tr><td colspan="5" class="empty">Nadie coincide con el filtro.</td></tr>`;return}
-  tb.innerHTML=list.map(i=>`<tr>
-    <td><b>${esc(i.nombre)}</b>${i.empresa?`<div class="status">${esc(i.empresa)}</div>`:""}</td>
-    <td class="mono">${esc(i.dni||"—")}</td>
-    <td>${esc(i.categoria||"General")}</td>
-    <td>${i.acreditado?`<span class="pill in">Ingresó ${hora(i.acreditadoEn)}</span>`:`<span class="pill out">Pendiente</span>`}</td>
-    <td><div class="acts">
-      ${i.acreditado?`<button class="btn small" data-a="undo" data-id="${i.id}">Deshacer</button>`:`<button class="btn small primary" data-a="in" data-id="${i.id}">Acreditar</button>`}
-      <button class="btn small" data-a="qr" data-id="${i.id}">Credencial</button>
-      <button class="btn small danger" data-a="del" data-id="${i.id}" aria-label="Eliminar">✕</button>
-    </div></td></tr>`).join("");
-}
-$("q").oninput=renderInv;
-document.querySelectorAll(".seg button").forEach(b=>b.onclick=()=>{filtro=b.dataset.f;document.querySelectorAll(".seg button").forEach(x=>x.setAttribute("aria-pressed",x===b));renderInv()});
-$("tbody").onclick=async e=>{
-  const b=e.target.closest("button[data-a]");if(!b)return;
-  const g=invitados.find(i=>i.id===b.dataset.id);if(!g)return;
-  if(b.dataset.a==="in")acreditar(g);
-  if(b.dataset.a==="undo"){if(await confirmBox("Deshacer ingreso",`${g.nombre} volverá a figurar como pendiente.`))
-    write(()=>db.doc("invitados/"+g.id).update({acreditado:false,acreditadoEn:null,acreditadoPor:null}),"Ingreso deshecho")}
-  if(b.dataset.a==="qr")showBadge(g);
-  if(b.dataset.a==="del"){if(await confirmBox("Eliminar invitado",`Se quita a ${g.nombre} de la lista de este evento.`))
-    write(()=>db.doc("invitados/"+g.id).delete(),"Invitado eliminado")}
-};
-async function write(fn,msg){try{await fn();msg&&toast(msg)}catch(e){toast(e.code==="invalid_argument"?"No tenés permiso para modificar datos. Pedí acceso de Colaborador.":"No se pudo guardar: "+e.message)}}
-
-async function acreditar(g){
-  try{
-    const fresh=await db.doc("invitados/"+g.id).get();
-    const d=fresh.exists?fresh.data():null;
-    if(!d){showResult("bad","No encontrado","El invitado fue eliminado.");return}
-    if(d.acreditado){showResult("warn","Ya ingresó",`${d.nombre} se acreditó a las ${hora(d.acreditadoEn)}.`,{...d,id:g.id});return}
-    await db.doc("invitados/"+g.id).update({acreditado:true,acreditadoEn:Date.now(),acreditadoPor:me||null});
-    showResult("ok","Acceso permitido",`${d.nombre}`,{...d,id:g.id});
-  }catch(e){write(()=>Promise.reject(e))}
-}
-function showResult(kind,verdict,text,g){
-  $("result").innerHTML=`<div class="result ${kind}" role="status"><div class="verdict">${esc(verdict)}</div>
-   <div class="who">${esc(text)}</div>${g?`<div class="status">${esc([g.categoria,g.empresa,g.dni&&"DNI "+g.dni].filter(Boolean).join(" · "))}</div>`:""}</div>`;
-}
-$("scanForm").onsubmit=e=>{
-  e.preventDefault();const raw=$("scanIn").value.trim();if(!raw)return;
-  const up=raw.toUpperCase(),n=norm(raw),digits=raw.replace(/\D/g,"");
-  let hit=invitados.find(i=>(i.codigo||"").toUpperCase()===up)||(digits.length>=6&&invitados.find(i=>(i.dni||"").replace(/\D/g,"")===digits));
-  $("scanIn").value="";$("scanIn").focus();
-  if(hit){acreditar(hit);return}
-  const other=eventos.length>1&&/^AC-/.test(up);
-  const ms=invitados.filter(i=>norm(i.nombre).includes(n)||norm(i.empresa).includes(n)).slice(0,8);
-  if(!ms.length){showResult("bad","Acceso denegado",other?`El código ${up} no pertenece a este evento.`:`“${raw}” no está en la lista de este evento.`);return}
-  $("result").innerHTML=`<div class="status" style="margin-top:12px">${ms.length} coincidencia(s) para “${esc(raw)}”:</div><div class="matches">${ms.map(i=>`<div class="match"><div><b>${esc(i.nombre)}</b><div class="status">${esc([i.categoria,i.empresa].filter(Boolean).join(" · "))}</div></div>${i.acreditado?`<span class="pill in">Ingresó ${hora(i.acreditadoEn)}</span>`:`<button class="btn small primary" data-m="${i.id}">Acreditar</button>`}</div>`).join("")}</div>`;
-};
-$("result").onclick=e=>{const b=e.target.closest("button[data-m]");if(b){const g=invitados.find(i=>i.id===b.dataset.m);g&&acreditar(g)}};
-
-$("addForm").onsubmit=e=>{
-  e.preventDefault();if(!evId)return;
-  const g={eventoId:evId,nombre:$("gNombre").value.trim(),dni:$("gDni").value.trim(),empresa:$("gEmpresa").value.trim(),categoria:$("gCat").value,codigo:code(),acreditado:false,acreditadoEn:null,creado:Date.now()};
-  if(!g.nombre)return;
-  write(()=>db.collection("invitados").add(g),"Invitado agregado").then(()=>{$("addForm").reset();$("gNombre").focus()});
-};
-$("impForm").onsubmit=async e=>{
-  e.preventDefault();if(!evId)return;
-  const lines=$("impText").value.split(/\r?\n/).map(l=>l.trim()).filter(Boolean);
-  let ok=0;
-  for(const l of lines){
-    const p=l.split(/\t|;|,/).map(x=>x.trim());
-    if(!p[0])continue;
-    const cat=CATS.find(c=>norm(c)===norm(p[3]))||"General";
-    try{await db.collection("invitados").add({eventoId:evId,nombre:p[0],dni:p[1]||"",empresa:p[2]||"",categoria:cat,codigo:code(),acreditado:false,acreditadoEn:null,creado:Date.now()});ok++;
-      $("impMsg").textContent=`Importando… ${ok}/${lines.length}`}catch(err){$("impMsg").textContent=`Se cortó en la línea ${ok+1}: ${err.message}`;return}
-  }
-  $("impMsg").textContent=`${ok} invitados importados.`;$("impText").value="";
-};
-
-$("btnNewEv").onclick=()=>{if(!db){toast("Sin conexión a la base de datos");return}$("eFecha").value=new Date().toISOString().slice(0,10);$("dlgEv").showModal();$("eNombre").focus()};
-$("evCancel").onclick=()=>$("dlgEv").close();
-$("evForm").onsubmit=async e=>{
-  e.preventDefault();
-  const ev={nombre:$("eNombre").value.trim(),fecha:$("eFecha").value,hora:$("eHora").value,sala:$("eSala").value.trim(),creado:Date.now()};
-  if(!ev.nombre||!ev.fecha)return;
-  try{const r=await db.collection("eventos").add(ev);evId=r.id;$("dlgEv").close();$("evForm").reset();toast("Evento creado")}catch(err){write(()=>Promise.reject(err))}
-};
-$("btnDelEv").onclick=async()=>{
-  const ev=eventos.find(e=>e.id===evId);if(!ev)return;
-  if(!await confirmBox("Eliminar evento",`Se borra “${ev.nombre}” y sus ${invitados.length} invitados. No se puede deshacer.`))return;
-  const ids=invitados.map(i=>i.id);
-  write(async()=>{for(const id of ids)await db.doc("invitados/"+id).delete();await db.doc("eventos/"+ev.id).delete();evId=null},"Evento eliminado");
-};
-
-function showBadge(g){
-  const ev=eventos.find(e=>e.id===g.eventoId)||{};
-  $("bEv").textContent=ev.nombre||"";$("bName").textContent=g.nombre;$("bEmp").textContent=g.empresa||"";
-  $("bCat").textContent=g.categoria||"General";$("bCode").textContent=g.codigo;
-  $("bQr").innerHTML="";
-  if(window.QRCode)new QRCode($("bQr"),{text:g.codigo,width:180,height:180,correctLevel:QRCode.CorrectLevel.M});
-  else $("bQr").textContent="(QR no disponible)";
-  $("bCopy").onclick=()=>{navigator.clipboard?.writeText(g.codigo).then(()=>toast("Código copiado"),()=>toast("Copialo a mano: "+g.codigo))};
-  $("dlgBadge").showModal();
-}
-$("bClose").onclick=()=>$("dlgBadge").close();
-
-$("btnCsv").onclick=async()=>{
-  const ev=eventos.find(e=>e.id===evId);if(!ev)return;
-  const rows=[["Nombre","DNI","Empresa","Categoria","Codigo","Estado","Hora ingreso"],...invitados.map(i=>[i.nombre,i.dni,i.empresa,i.categoria,i.codigo,i.acreditado?"Ingresó":"Pendiente",hora(i.acreditadoEn)])];
-  const csv="﻿"+rows.map(r=>r.map(v=>`"${(v??"").toString().replace(/"/g,'""')}"`).join(";")).join("\n");
-  const dl=window.claude?.use?await window.claude.use("downloads"):null;
-  if(!dl){toast("La descarga no está disponible en esta vista");return}
-  try{await dl.save({filename:`acreditaciones-${ev.fecha}-${ev.nombre.replace(/[^\w-]+/g,"_")}.csv`,data:new Blob([csv],{type:"text/csv"})})}catch(e){}
-};
-boot();
-</script>
+<script src="app.js"></script>
+</body>
+</html>
