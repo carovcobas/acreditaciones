@@ -33,9 +33,9 @@ Sitio estático (HTML + JS) alojado en Vercel, con base de datos, login y tiempo
 3. **Authentication → Sign In / Providers → Email**: desactivá **Allow new users to sign up**, así solo entra el personal que vos des de alta.
 4. **Authentication → Users → Add user → Create new user**: creá un usuario (email + contraseña) para cada persona que acredite. Marcá **Auto Confirm User**.
 5. **Authentication → URL Configuration**: en **Site URL** poné `https://acreditaciones.carolinacobas.com`.
-6. **Project Settings → API**: copiá **Project URL** y la clave **anon public** en `config.js`. Subí el cambio a GitHub.
+6. **Project Settings → API**: copiá **Project URL** y la **Publishable key** (`sb_publishable_...`) en `config.js`. Subí el cambio a GitHub.
 
-> La clave `anon` es pública por diseño. Nunca pongas la `service_role` en `config.js`.
+> La publishable key es pública por diseño. Nunca pongas la secret key (`sb_secret_...`) en `config.js`.
 
 ### 2. Vercel
 
