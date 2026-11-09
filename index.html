@@ -115,6 +115,26 @@ dialog::backdrop{background:rgba(10,14,20,.55)}
 .login{max-width:420px}
 #reader{margin-top:12px;border-radius:8px;overflow:hidden;border:1px solid var(--line)}
 #reader video{width:100%!important;height:auto!important}
+/* Pantalla de puerta (rol puerta): una columna, cámara al centro, resultado grande */
+.door{display:flex;flex-direction:column;gap:12px;max-width:520px;width:100%;margin:0 auto}
+.door-top{display:flex;gap:10px;align-items:center}
+.door-top select{flex:1;font-weight:600}
+.door-count{font-family:var(--display);font-size:1.6rem;font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}
+.door-count small{font-size:.9rem;color:var(--muted);font-weight:600}
+.dres{border-radius:10px;padding:18px;border:2px solid var(--line);background:var(--surface);text-align:center;min-height:118px;display:flex;flex-direction:column;justify-content:center;gap:4px}
+.dres .verdict{font-family:var(--display);font-size:2.3rem;line-height:1.05;text-transform:uppercase;font-weight:700}
+.dres .who{font-size:1.2rem;font-weight:600}
+.dres.ok{background:var(--ok-bg);border-color:var(--ok)} .dres.ok .verdict{color:var(--ok)}
+.dres.warn{background:var(--warn-bg);border-color:var(--warn)} .dres.warn .verdict{color:var(--warn)}
+.dres.bad{background:var(--bad-bg);border-color:var(--bad)} .dres.bad .verdict{color:var(--bad)}
+#doorReader{border-radius:10px;overflow:hidden;border:1px solid var(--line);background:#000;min-height:200px}
+#doorReader video{width:100%!important;height:auto!important;display:block}
+.door form{display:flex;gap:8px}
+.door form input{font-family:var(--mono);text-transform:uppercase}
+body.is-door h1{font-size:1.3rem}
+body.is-door .wrap{padding-block:12px 24px}
+.chip.pick{cursor:pointer;padding:5px 12px;font-size:.88rem}
+.chip.pick input{width:auto;margin:0;accent-color:var(--accent)}
 </style>
 
 </head>
@@ -134,6 +154,22 @@ dialog::backdrop{background:rgba(10,14,20,.55)}
     </div>
   </header>
   <div class="status" id="status">Conectando con la base de datos…</div>
+
+  <section class="door" id="door" hidden>
+    <div class="door-top">
+      <select id="dEv" aria-label="Evento"></select>
+      <div class="door-count"><span id="dIn">0</span><small> / <span id="dTot">0</span></small></div>
+    </div>
+    <div id="dResult" class="dres" role="status" aria-live="assertive">
+      <div class="verdict">Listo</div><div class="who">Apuntá la cámara al QR de la credencial</div>
+    </div>
+    <div id="doorReader"></div>
+    <button class="btn primary" id="dCamBtn" type="button" hidden>Abrir cámara</button>
+    <form id="dForm" autocomplete="off">
+      <input id="dManual" placeholder="Código o DNI" aria-label="Código o DNI">
+      <button class="btn" type="submit">Acreditar</button>
+    </form>
+  </section>
 
   <section class="panel login" id="loginPanel" hidden>
     <h2>Ingreso del personal</h2>
@@ -158,6 +194,11 @@ dialog::backdrop{background:rgba(10,14,20,.55)}
     </div>
     <div class="bar"><i id="cBar"></i></div>
     <div class="cats" id="cCats"></div>
+    <details class="add" id="staffBox">
+      <summary>Personal de puerta asignado: <span id="staffSum">todos</span></summary>
+      <div class="status" style="margin-top:8px">Sin nadie marcado, cualquier persona de puerta puede acreditar en este evento el día que se hace. Si marcás a alguien, solo las personas marcadas lo ven.</div>
+      <div class="cats" id="staffList"></div>
+    </details>
   </section>
 
   <section class="panel" id="noEv" hidden>

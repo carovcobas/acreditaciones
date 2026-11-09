@@ -37,6 +37,18 @@ Sitio estático (HTML + JS) alojado en Vercel, con base de datos, login y tiempo
 
 > La publishable key es pública por diseño. Nunca pongas la secret key (`sb_secret_...`) en `config.js`.
 
+### 1b. Roles
+
+Ejecutá `supabase/roles.sql` en el SQL Editor (después de `schema.sql`).
+
+- **admin** (carovcobas@gmail.com): crea eventos, carga invitados, asigna personal y exporta.
+- **puerta** (todo usuario nuevo): al entrar se abre la cámara. Ve solo los eventos de hoy (y de ayer, para los que pasan la medianoche) y acredita. No puede ver la lista de invitados ni modificar nada.
+
+**Asignar personal a un evento:** en el evento, abrí *Personal de puerta asignado* y marcá a las personas.
+Sin nadie marcado, el evento lo ve todo el personal de puerta. Con alguien marcado, solo esas personas.
+
+Para hacer admin a otra persona: Table Editor → `perfiles` → cambiá `rol` a `admin`.
+
 ### 2. Vercel
 
 1. Entrá a https://vercel.com con tu cuenta de GitHub.

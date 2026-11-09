@@ -41,19 +41,28 @@ async function boot() {
   sb.auth.onAuthStateChange((_e, s) => { if ((s?.user?.id) !== (session?.user?.id)) onSession(s); });
 }
 
-function onSession(s) {
+let rol = null;
+async function onSession(s) {
   session = s;
+  stopAll(); eventos = []; invitados = []; rol = null;
   const logged = !!s;
   $("loginPanel").hidden = logged;
-  $("btnNewEv").hidden = $("btnLogout").hidden = !logged;
-  $("evSel").parentElement.querySelector("label").hidden = $("evSel").hidden = !logged;
+  $("btnLogout").hidden = !logged;
+  showAdminChrome(false);
+  $("door").hidden = true; document.body.classList.remove("is-door");
+  $("noEv").hidden = $("evPanel").hidden = $("main").hidden = true;
   $("who").textContent = logged ? s.user.email : "";
   $("status").textContent = "";
-  if (logged) { startEventos(); }
-  else {
-    stopAll(); eventos = []; invitados = [];
-    $("noEv").hidden = $("evPanel").hidden = $("main").hidden = true;
-  }
+  if (!logged) return;
+  const { data, error } = await sb.from("perfiles").select("rol").eq("user_id", s.user.id).maybeSingle();
+  if (error || !data) { $("status").textContent = "Tu usuario todavía no tiene un rol asignado. Pedile acceso a la administradora."; return; }
+  rol = data.rol;
+  if (rol === "admin") { showAdminChrome(true); startEventos(); }
+  else startDoor();
+}
+function showAdminChrome(on) {
+  $("btnNewEv").hidden = !on;
+  $("evSel").parentElement.querySelector("label").hidden = $("evSel").hidden = !on;
 }
 
 $("loginForm").onsubmit = async (e) => {
@@ -66,8 +75,10 @@ $("loginForm").onsubmit = async (e) => {
 $("btnLogout").onclick = () => sb.auth.signOut();
 
 function stopAll() {
+  if (!sb) return;
   if (chEventos) { sb.removeChannel(chEventos); chEventos = null; }
   if (chInv) { sb.removeChannel(chInv); chInv = null; }
+  if (doorTimer) { clearInterval(doorTimer); doorTimer = null; }
   subscribedFor = null; stopCam();
 }
 
@@ -108,6 +119,7 @@ function setEvento(id) {
   subscribedFor = id; invitados = []; renderInv(); $("result").innerHTML = "";
   if (!id) return;
   loadInvitados(id);
+  loadStaff(id);
   chInv = sb.channel("inv-" + id)
     .on("postgres_changes", { event: "*", schema: "public", table: "invitados", filter: `evento_id=eq.${id}` }, (p) => {
       if (subscribedFor !== id) return;
@@ -176,20 +188,27 @@ $("tbody").onclick = async (e) => {
 };
 
 // ---------- Acreditación ----------
-// El update solo aplica si todavía no estaba acreditado: si dos puertas escanean a la vez, gana una sola.
-async function acreditar(g) {
-  const { data, error } = await sb.from("invitados")
-    .update({ acreditado: true, acreditado_en: new Date().toISOString(), acreditado_por_email: session?.user?.email || null })
-    .eq("id", g.id).eq("acreditado", false).select();
-  if (error) { fail(error); return; }
-  if (data.length) { showResult("ok", "Acceso permitido", data[0].nombre, data[0]); return; }
-  const { data: cur } = await sb.from("invitados").select("*").eq("id", g.id).maybeSingle();
-  if (!cur) showResult("bad", "No encontrado", "El invitado fue eliminado.");
-  else showResult("warn", "Ya ingresó", `${cur.nombre} se acreditó a las ${hora(cur.acreditado_en)}${cur.acreditado_por_email ? " (" + cur.acreditado_por_email + ")" : ""}.`, cur);
+// Toda acreditación pasa por la función acreditar() de la base: marca el ingreso una sola vez
+// aunque dos puertas escaneen el mismo QR al mismo tiempo.
+async function rpcAcreditar(evento, valor) {
+  const { data, error } = await sb.rpc("acreditar", { p_evento: evento, p_valor: valor });
+  if (error) { fail(error, "No se pudo acreditar"); return null; }
+  return data;
 }
-function showResult(kind, verdict, text, g) {
+function veredicto(r) {
+  const meta = [r.categoria, r.empresa, r.dni && "DNI " + r.dni].filter(Boolean).join(" · ");
+  if (r.estado === "ok") return ["ok", "Acceso permitido", r.nombre, meta];
+  if (r.estado === "ya_ingreso") return ["warn", "Ya ingresó", `${r.nombre} · ${hora(r.acreditado_en)}`, [meta, r.acreditado_por && "por " + r.acreditado_por].filter(Boolean).join(" · ")];
+  if (r.estado === "otro_evento") return ["bad", "Otro evento", `La credencial es de “${r.evento}”`, r.valor];
+  return ["bad", "Acceso denegado", "No está en la lista de este evento", r.valor];
+}
+async function acreditar(g) {
+  const r = await rpcAcreditar(g.evento_id, g.codigo);
+  if (r) showResult(...veredicto(r));
+}
+function showResult(kind, verdict, text, meta) {
   $("result").innerHTML = `<div class="result ${kind}" role="status"><div class="verdict">${esc(verdict)}</div>
-   <div class="who">${esc(text)}</div>${g ? `<div class="status">${esc([g.categoria, g.empresa, g.dni && "DNI " + g.dni].filter(Boolean).join(" · "))}</div>` : ""}</div>`;
+   <div class="who">${esc(text)}</div>${meta ? `<div class="status">${esc(meta)}</div>` : ""}</div>`;
 }
 
 async function buscar(raw) {
@@ -198,12 +217,7 @@ async function buscar(raw) {
   const hit = invitados.find((i) => (i.codigo || "").toUpperCase() === up) ||
     (digits.length >= 6 && invitados.find((i) => (i.dni || "").replace(/\D/g, "") === digits));
   if (hit) { acreditar(hit); return; }
-  if (/^AC-/.test(up)) {
-    const { data } = await sb.from("invitados").select("evento_id").eq("codigo", up).maybeSingle();
-    const ev = data && eventos.find((e) => e.id === data.evento_id);
-    showResult("bad", "Acceso denegado", ev ? `El código ${up} es del evento “${ev.nombre}”.` : `El código ${up} no existe.`);
-    return;
-  }
+  if (/^AC-/.test(up)) { const r = await rpcAcreditar(evId, up); if (r) showResult(...veredicto(r)); return; }
   const ms = invitados.filter((i) => norm(i.nombre).includes(n) || norm(i.empresa).includes(n)).slice(0, 8);
   if (!ms.length) { showResult("bad", "Acceso denegado", `“${raw}” no está en la lista de este evento.`); return; }
   $("result").innerHTML = `<div class="status" style="margin-top:12px">${ms.length} coincidencia(s) para “${esc(raw)}”:</div><div class="matches">${ms.map((i) => `<div class="match"><div><b>${esc(i.nombre)}</b><div class="status">${esc([i.categoria, i.empresa].filter(Boolean).join(" · "))}</div></div>${i.acreditado ? `<span class="pill in">Ingresó ${hora(i.acreditado_en)}</span>` : `<button class="btn small primary" data-m="${i.id}">Acreditar</button>`}</div>`).join("")}</div>`;
@@ -216,26 +230,130 @@ $("scanForm").onsubmit = (e) => {
 $("result").onclick = (e) => { const b = e.target.closest("button[data-m]"); if (b) { const g = invitados.find((i) => i.id === b.dataset.m); g && acreditar(g); } };
 
 // ---------- Cámara ----------
-let lastScan = { text: "", t: 0 };
-async function startCam() {
-  if (!window.Html5Qrcode) { toast("El lector de cámara no cargó."); return; }
-  $("reader").hidden = false; $("btnCam").textContent = "Cerrar cámara";
-  scanner = new Html5Qrcode("reader");
+// Un solo lector a la vez: el panel de admin usa #reader y la pantalla de puerta #doorReader.
+let lastScan = { text: "", t: 0 }, camEl = null;
+async function startCam(elId, onText) {
+  if (!window.Html5Qrcode) { toast("El lector de cámara no cargó."); return false; }
+  await stopCam();
+  camEl = elId; $(elId).hidden = false;
+  scanner = new Html5Qrcode(elId);
   try {
-    await scanner.start({ facingMode: "environment" }, { fps: 10, qrbox: 220 }, (text) => {
+    await scanner.start({ facingMode: "environment" }, { fps: 10, qrbox: (w, h) => { const m = Math.floor(Math.min(w, h) * 0.7); return { width: m, height: m }; } }, (text) => {
       const now = Date.now();
       if (text === lastScan.text && now - lastScan.t < 4000) return; // evita lecturas repetidas del mismo QR
       lastScan = { text, t: now };
-      if (navigator.vibrate) navigator.vibrate(80);
-      buscar(text);
+      onText(text);
     });
-  } catch (err) { toast("No se pudo abrir la cámara. Revisá el permiso del navegador."); stopCam(); }
+    return true;
+  } catch (err) { await stopCam(); return false; }
 }
 async function stopCam() {
   if (scanner) { try { await scanner.stop(); scanner.clear(); } catch (e) {} scanner = null; }
-  $("reader").hidden = true; $("btnCam").textContent = "Escanear con la cámara";
+  if (camEl === "reader") $("reader").hidden = true;
+  camEl = null; $("btnCam").textContent = "Escanear con la cámara";
 }
-$("btnCam").onclick = () => scanner ? stopCam() : startCam();
+$("btnCam").onclick = async () => {
+  if (scanner) { stopCam(); return; }
+  $("btnCam").textContent = "Cerrar cámara";
+  if (!await startCam("reader", (t) => { navigator.vibrate?.(80); buscar(t); })) toast("No se pudo abrir la cámara. Revisá el permiso del navegador.");
+};
+
+// ---------- Pantalla de puerta ----------
+let doorEv = null, doorTimer = null, doorReset = null, audio = null;
+function beep(ok) {
+  try {
+    audio = audio || new (window.AudioContext || window.webkitAudioContext)();
+    const o = audio.createOscillator(), g = audio.createGain();
+    o.frequency.value = ok ? 880 : 220; o.type = ok ? "sine" : "square";
+    g.gain.value = 0.15; o.connect(g); g.connect(audio.destination);
+    o.start(); o.stop(audio.currentTime + (ok ? 0.15 : 0.45));
+  } catch (e) {}
+}
+function doorShow(kind, verdict, who, meta) {
+  const d = $("dResult");
+  d.className = "dres " + (kind || "");
+  d.innerHTML = `<div class="verdict">${esc(verdict)}</div><div class="who">${esc(who || "")}</div>${meta ? `<div class="status">${esc(meta)}</div>` : ""}`;
+  clearTimeout(doorReset);
+  if (kind) doorReset = setTimeout(() => doorShow("", "Listo", "Apuntá la cámara al QR de la credencial"), kind === "ok" ? 3500 : 6000);
+}
+async function startDoor() {
+  document.body.classList.add("is-door");
+  $("door").hidden = false;
+  const { data, error } = await sb.from("eventos").select("*").order("fecha", { ascending: false }).order("hora", { ascending: true });
+  if (error) { doorShow("bad", "Error", "No se pudieron leer los eventos", error.message); return; }
+  eventos = data;
+  const sel = $("dEv");
+  if (!eventos.length) {
+    sel.innerHTML = `<option>Sin eventos para hoy</option>`; sel.disabled = true;
+    doorShow("", "Sin eventos", "No tenés eventos asignados para hoy.");
+    return;
+  }
+  sel.disabled = eventos.length === 1;
+  sel.innerHTML = eventos.map((e) => `<option value="${e.id}">${esc(e.nombre)}${e.hora ? " · " + e.hora.slice(0, 5) : ""}${e.sala ? " · " + esc(e.sala) : ""}</option>`).join("");
+  let saved = null; try { saved = localStorage.getItem("doorEv"); } catch (e) {}
+  doorEv = (eventos.find((e) => e.id === saved) || eventos[0]).id;
+  sel.value = doorEv;
+  doorCount();
+  doorTimer = setInterval(doorCount, 20000);
+  doorShow("", "Listo", "Apuntá la cámara al QR de la credencial");
+  openDoorCam();
+}
+async function openDoorCam() {
+  const ok = await startCam("doorReader", doorScan);
+  $("dCamBtn").hidden = ok; $("doorReader").hidden = !ok;
+  if (!ok) doorShow("warn", "Cámara cerrada", "Tocá “Abrir cámara” y permití el acceso", "Si no aparece el permiso, revisá la configuración del navegador.");
+}
+$("dCamBtn").onclick = openDoorCam;
+$("dEv").onchange = (e) => {
+  doorEv = e.target.value; try { localStorage.setItem("doorEv", doorEv); } catch (err) {}
+  doorCount(); doorShow("", "Listo", "Apuntá la cámara al QR de la credencial");
+};
+async function doorCount() {
+  if (!doorEv) return;
+  const { data } = await sb.rpc("resumen_evento", { p_evento: doorEv });
+  if (data) { $("dIn").textContent = data.ingresados; $("dTot").textContent = data.total; }
+}
+let doorBusy = false;
+async function doorScan(text) {
+  if (doorBusy || !doorEv) return;
+  doorBusy = true;
+  doorShow("", "Verificando…", text.toUpperCase());
+  const { data, error } = await sb.rpc("acreditar", { p_evento: doorEv, p_valor: text });
+  doorBusy = false;
+  if (error) { beep(false); navigator.vibrate?.([80, 60, 80]); doorShow("bad", "Error", "No se pudo acreditar", error.message); return; }
+  const [kind, verdict, who, meta] = veredicto(data);
+  beep(kind === "ok"); navigator.vibrate?.(kind === "ok" ? 120 : [80, 60, 80, 60, 80]);
+  doorShow(kind, verdict, who, meta);
+  if (kind === "ok") doorCount();
+}
+$("dForm").onsubmit = (e) => {
+  e.preventDefault();
+  const v = $("dManual").value.trim(); if (!v) return;
+  $("dManual").value = ""; lastScan = { text: "", t: 0 };
+  doorScan(v);
+};
+
+// ---------- Asignación de personal (admin) ----------
+async function loadStaff(id) {
+  const [{ data: perfiles }, { data: asig }] = await Promise.all([
+    sb.from("perfiles").select("user_id,email,rol").eq("rol", "puerta").order("email"),
+    sb.from("asignaciones").select("user_id").eq("evento_id", id),
+  ]);
+  if (evId !== id) return;
+  const marcados = new Set((asig || []).map((a) => a.user_id));
+  $("staffSum").textContent = marcados.size ? `${marcados.size} persona(s)` : "todo el personal";
+  $("staffList").innerHTML = (perfiles || []).length
+    ? perfiles.map((p) => `<label class="chip pick"><input type="checkbox" data-u="${p.user_id}" ${marcados.has(p.user_id) ? "checked" : ""}> ${esc(p.email)}</label>`).join("")
+    : `<span class="status">Todavía no hay usuarios de puerta. Crealos en Supabase → Authentication → Users.</span>`;
+}
+$("staffList").onchange = async (e) => {
+  const cb = e.target.closest("input[data-u]"); if (!cb || !evId) return;
+  const row = { user_id: cb.dataset.u, evento_id: evId };
+  const { error } = cb.checked ? await sb.from("asignaciones").insert(row)
+    : await sb.from("asignaciones").delete().eq("user_id", row.user_id).eq("evento_id", row.evento_id);
+  if (error) { cb.checked = !cb.checked; fail(error); return; }
+  loadStaff(evId);
+};
 
 // ---------- Alta e importación ----------
 $("addForm").onsubmit = async (e) => {
