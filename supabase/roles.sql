@@ -140,3 +140,11 @@ revoke all on function public.acreditar(uuid, text)  from public, anon;
 revoke all on function public.resumen_evento(uuid)   from public, anon;
 grant execute on function public.acreditar(uuid, text) to authenticated;
 grant execute on function public.resumen_evento(uuid)  to authenticated;
+
+-- 4. Endurecer funciones (avisos de seguridad de Supabase) ---------------------
+alter function public.hoy_ar() set search_path = public;
+revoke all on function public.crear_perfil() from public, anon, authenticated;
+revoke all on function public.es_admin()  from public, anon;
+revoke all on function public.tiene_rol() from public, anon;
+grant execute on function public.es_admin()  to authenticated;
+grant execute on function public.tiene_rol() to authenticated;
